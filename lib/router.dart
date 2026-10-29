@@ -2,6 +2,9 @@ import 'package:flutter/widgets.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import 'auth/auth_notifier.dart';
+import 'auth/route_access.dart';
+
 import 'models/author.dart';
 import 'models/author_query.dart';
 import 'models/book.dart';
@@ -19,18 +22,27 @@ import 'screens/author_list_screen.dart';
 import 'screens/book_detail_screen.dart';
 import 'screens/book_form_screen.dart';
 import 'screens/book_list_screen.dart';
+import 'screens/dashboard_screen.dart';
+import 'screens/desk_screen.dart';
+import 'screens/forbidden_screen.dart';
 import 'screens/genre_detail_screen.dart';
 import 'screens/genre_form_screen.dart';
 import 'screens/genre_list_screen.dart';
 import 'screens/loan_form_screen.dart';
 import 'screens/loan_list_screen.dart';
+import 'screens/login_screen.dart';
+import 'screens/my_loans_screen.dart';
 import 'screens/not_found_screen.dart';
+import 'screens/offline_screen.dart';
 import 'screens/publisher_detail_screen.dart';
 import 'screens/publisher_form_screen.dart';
 import 'screens/publisher_list_screen.dart';
 import 'screens/reader_detail_screen.dart';
 import 'screens/reader_form_screen.dart';
 import 'screens/reader_list_screen.dart';
+import 'screens/register_screen.dart';
+import 'screens/stats_screen.dart';
+import 'screens/users_screen.dart';
 import 'state/detail_notifier.dart';
 
 int? _idFrom(GoRouterState state) => int.tryParse(state.pathParameters['id'] ?? '');
@@ -78,13 +90,78 @@ GoRoute _entityRoute<T>({
   );
 }
 
-GoRouter buildRouter({String initialLocation = '/books'}) {
+/// Решает, пускать ли на адрес. Вызывается при каждом переходе и при каждом
+/// изменении состояния входа (refreshListenable), в том числе после выхода
+/// по таймеру: открытый защищённый экран сразу заменяется на вход.
+String? guardLocation(AuthNotifier auth, GoRouterState state) {
+  final path = state.uri.path;
+  final full = state.uri.toString();
+
+  // Токены есть, но сервер недоступен: сессию не бросаем, ждём повтора.
+  if (auth.isUnverified) return path == '/offline' ? null : '/offline';
+
+  if (!auth.isAuthenticated) {
+    if (isPublicPath(path)) return null;
+    // Запоминаем, куда шёл пользователь, чтобы вернуть его после входа.
+    final target = safeReturnTo(full);
+    if (target == null || target == '/') return '/login';
+    return '/login?from=${Uri.encodeComponent(target)}';
+  }
+
+  if (path == '/offline') return '/';
+  if (isPublicPath(path)) {
+    return safeReturnTo(state.uri.queryParameters['from']) ?? '/';
+  }
+
+  final needed = requiredPermission(full);
+  if (needed != null && !auth.can(needed)) {
+    return '/forbidden?path=${Uri.encodeComponent(full)}';
+  }
+  return null;
+}
+
+GoRouter buildRouter({required AuthNotifier auth, String initialLocation = '/'}) {
   return GoRouter(
     initialLocation: initialLocation,
+    refreshListenable: auth,
+    redirect: (context, state) => guardLocation(auth, state),
     routes: [
       GoRoute(
         path: '/',
-        redirect: (context, state) => '/books',
+        builder: (context, state) => const DashboardScreen(),
+      ),
+      GoRoute(
+        path: '/login',
+        builder: (context, state) => const LoginScreen(),
+      ),
+      GoRoute(
+        path: '/register',
+        builder: (context, state) => const RegisterScreen(),
+      ),
+      GoRoute(
+        path: '/offline',
+        builder: (context, state) => const OfflineScreen(),
+      ),
+      GoRoute(
+        path: '/forbidden',
+        builder: (context, state) =>
+            ForbiddenScreen(attempted: state.uri.queryParameters['path']),
+      ),
+      GoRoute(
+        path: '/my/loans',
+        builder: (context, state) => const MyLoansScreen(),
+      ),
+      GoRoute(
+        path: '/desk',
+        builder: (context, state) => const DeskScreen(),
+      ),
+      GoRoute(
+        path: '/admin/users',
+        builder: (context, state) => const UsersScreen(),
+      ),
+      GoRoute(
+        path: '/admin/stats',
+        builder: (context, state) => const StatsScreen(),
       ),
       _entityRoute<Book>(
         path: 'books',

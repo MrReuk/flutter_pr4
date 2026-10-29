@@ -12,9 +12,9 @@ void main() {
   late FakeServer server;
   late PagedListNotifier<Book, BookQuery> notifier;
 
-  setUp(() {
+  setUp(() async {
     server = FakeServer();
-    final repos = makeRepositories(server);
+    final repos = await makeRepositories(server);
     notifier = PagedListNotifier<Book, BookQuery>(
       initialQuery: const BookQuery(),
       repository: repos.books,
@@ -109,7 +109,7 @@ void main() {
         sortFields: kPublisherSortFields,
         defaultSort: 'name',
       ),
-      repository: makeRepositories(server).publishers,
+      repository: (await makeRepositories(server)).publishers,
       idOf: (publisher) => publisher.id,
     );
     addTearDown(publishers.dispose);

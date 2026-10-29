@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../auth/permissions.dart';
 import '../models/reader.dart';
 import '../validation/validators.dart';
 import '../widgets/detail_layout.dart';
@@ -12,6 +13,7 @@ class ReaderDetailScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return EntityDetailScreen<Reader>(
       title: 'Карточка читателя',
+      editPermission: Permission.manageReaders,
       listPath: '/readers',
       listLabel: 'К списку читателей',
       notFoundMessage: 'Читатель не найден',

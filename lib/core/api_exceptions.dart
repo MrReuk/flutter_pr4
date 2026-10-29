@@ -47,7 +47,11 @@ ApiException mapHttpError(int status, dynamic body) {
 
   return switch (status) {
     401 => UnauthorizedException(message ?? 'Требуется вход в систему.'),
-    403 => ForbiddenException(message ?? 'Недостаточно прав для этого действия.'),
+    403 => ForbiddenException(
+        message == null
+            ? 'Недостаточно прав для этого действия.'
+            : 'Недостаточно прав для этого действия. ${message.endsWith('.') ? message : '$message.'}',
+      ),
     404 => NotFoundException(message ?? 'Запись не найдена.'),
     409 => ConflictException(message ?? 'Операция невозможна.'),
     422 => ValidationException(

@@ -32,9 +32,9 @@ void main() {
   late FakeServer server;
   late AppRepositories repos;
 
-  setUp(() {
+  setUp(() async {
     server = FakeServer();
-    repos = makeRepositories(server);
+    repos = await makeRepositories(server);
   });
 
   test('Список запрашивается с параметрами поиска, фильтра, сортировки и страницы', () async {
@@ -125,7 +125,7 @@ void main() {
   });
 
   test('Ошибка 500 превращается в ServerException без повторов', () async {
-    final failing = makeRepositories(server, debugFlags: {'__fail': '500'});
+    final failing = await makeRepositories(server, debugFlags: {'__fail': '500'});
 
     await expectLater(
       failing.books.find(const BookQuery()),
@@ -175,29 +175,8 @@ void main() {
     expect(page.items, isNotEmpty);
   });
 
-  test('Просроченный токен обновляется, а запрос повторяется один раз', () async {
-    await repos.genres.create(const Genre(id: 0, name: 'Детектив'));
-    expect(server.loginCount, 1);
-
-    server.revokeToken();
-    final created = await repos.genres.create(const Genre(id: 0, name: 'Поэзия'));
-
-    expect(created.name, 'Поэзия');
-    expect(server.loginCount, 2);
-    expect(server.calls('POST', '/genres'), hasLength(3));
-  });
-
-  test('Заголовок авторизации добавляется только в изменяющие запросы после входа', () async {
-    await repos.genres.findAll();
-    expect(server.calls('GET', '/genres').single.headers['Authorization'], isNull);
-
-    await repos.genres.create(const Genre(id: 0, name: 'Детектив'));
-    final write = server.calls('POST', '/genres').single;
-    expect(write.headers['Authorization'], 'Bearer token-1');
-  });
-
   test('Отладочные параметры добавляются к каждому запросу', () async {
-    final slow = makeRepositories(server, debugFlags: {'__delay': '1500'});
+    final slow = await makeRepositories(server, debugFlags: {'__delay': '1500'});
 
     await slow.authors.find(const AuthorQuery());
 

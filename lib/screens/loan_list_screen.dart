@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../auth/permissions.dart';
 import '../models/loan.dart';
 import '../models/simple_query.dart';
 import '../repositories/entity_repository.dart';
@@ -23,6 +24,7 @@ class LoanListScreen extends StatelessWidget {
     return SimpleListScreen<Loan>(
       query: query,
       config: SimpleListConfig<Loan>(
+        managePermission: Permission.manageLoans,
         title: 'Выдачи',
         path: '/loans',
         searchLabel: '',

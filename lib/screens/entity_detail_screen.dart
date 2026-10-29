@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../auth/auth_notifier.dart';
+import '../auth/permissions.dart';
 import '../state/detail_notifier.dart';
 import '../state/load_status.dart';
 import '../widgets/detail_layout.dart';
@@ -19,6 +21,7 @@ class EntityDetailScreen<T> extends StatelessWidget {
     required this.nameOf,
     required this.isDeleted,
     required this.fields,
+    this.editPermission = Permission.manageCatalog,
   });
 
   final String title;
@@ -29,6 +32,7 @@ class EntityDetailScreen<T> extends StatelessWidget {
   final String Function(T item) nameOf;
   final bool Function(T item) isDeleted;
   final List<Widget> Function(BuildContext context, T item) fields;
+  final Permission editPermission;
 
   @override
   Widget build(BuildContext context) {
@@ -61,14 +65,15 @@ class EntityDetailScreen<T> extends StatelessWidget {
     return DetailLayout(
       title: nameOf(item),
       actions: [
-        FilledButton.tonalIcon(
-          onPressed: () async {
-            final changed = await context.push<bool>(editLocation(item));
-            if (changed == true) await detail.load();
-          },
-          icon: const Icon(Icons.edit),
-          label: const Text('Изменить'),
-        ),
+        if (context.watch<AuthNotifier>().can(editPermission))
+          FilledButton.tonalIcon(
+            onPressed: () async {
+              final changed = await context.push<bool>(editLocation(item));
+              if (changed == true) await detail.load();
+            },
+            icon: const Icon(Icons.edit),
+            label: const Text('Изменить'),
+          ),
       ],
       children: [
         if (isDeleted(item))

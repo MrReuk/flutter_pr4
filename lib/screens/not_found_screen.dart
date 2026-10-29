@@ -15,8 +15,8 @@ class NotFoundScreen extends StatelessWidget {
       title: 'Страница не найдена',
       body: EmptyView(
         message: 'Адрес $location не существует',
-        actionLabel: 'К списку книг',
-        onAction: () => context.go('/books'),
+        actionLabel: 'На главную',
+        onAction: () => context.go('/'),
       ),
     );
   }

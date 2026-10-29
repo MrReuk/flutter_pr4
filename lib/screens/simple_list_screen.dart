@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../auth/permissions.dart';
+import '../auth/rights.dart';
 import '../models/simple_query.dart';
 import '../state/paged_list_notifier.dart';
 import '../state/reference_notifier.dart';
@@ -35,6 +37,7 @@ class SimpleListConfig<T> {
     this.searchable = true,
     this.editable = true,
     this.openable = true,
+    this.managePermission = Permission.manageCatalog,
     this.extraActions,
   });
 
@@ -52,6 +55,7 @@ class SimpleListConfig<T> {
   final bool searchable;
   final bool editable;
   final bool openable;
+  final Permission managePermission;
   final List<Widget> Function(
     BuildContext context,
     T item,
@@ -144,6 +148,7 @@ class _SimpleListScreenState<T> extends State<SimpleListScreen<T>> {
     final notifier = context.watch<PagedListNotifier<T, SimpleQuery>>();
     final q = _query;
     final config = _config;
+    final rights = listRights(context, config.managePermission);
 
     return LibraryScaffold(
       title: config.title,
@@ -158,13 +163,14 @@ class _SimpleListScreenState<T> extends State<SimpleListScreen<T>> {
             initiallyOpen: q.activeFilterCount > 0,
             onReset: () => _go(q.reset()),
             addLabel: config.addLabel,
-            onAdd: () => _open('${config.path}/new'),
+            onAdd: rights.canManage ? () => _open('${config.path}/new') : null,
             filters: [
               ...?config.filterBuilder?.call(context, q, _go),
-              DeletedSwitch(
-                value: q.includeDeleted,
-                onChanged: (value) => _go(q.copyWith(includeDeleted: value)),
-              ),
+              if (rights.canRestore)
+                DeletedSwitch(
+                  value: q.includeDeleted,
+                  onChanged: (value) => _go(q.copyWith(includeDeleted: value)),
+                ),
             ],
           ),
           if (notifier.hasSelection)
@@ -187,8 +193,8 @@ class _SimpleListScreenState<T> extends State<SimpleListScreen<T>> {
               idOf: config.idOf,
               isDeleted: config.isDeleted,
               selected: notifier.selected,
-              onToggleSelect: notifier.toggleSelection,
-              onSelectAll: notifier.setAllSelected,
+              onToggleSelect: rights.canManage ? notifier.toggleSelection : null,
+              onSelectAll: rights.canManage ? notifier.setAllSelected : null,
               sortField: q.sortField,
               sortAscending: q.sortAscending,
               onSort: (field) => _go(
@@ -205,6 +211,7 @@ class _SimpleListScreenState<T> extends State<SimpleListScreen<T>> {
                 return buildRowActions(
                   context,
                   deleted: config.isDeleted(item),
+                  rights: rights,
                   name: config.nameOf(item),
                   onEdit: config.editable
                       ? () => _open('${config.path}/$id/edit')

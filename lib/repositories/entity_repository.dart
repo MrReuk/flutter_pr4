@@ -33,4 +33,7 @@ abstract interface class LoanRepository implements EntityRepository<Loan, Simple
   });
 
   Future<Loan> markReturned(int id);
+
+  /// Продление срока выдачи читателем. Нужен сервер с адресом /loans/{id}/extend.
+  Future<Loan> extend(int id);
 }

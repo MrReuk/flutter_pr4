@@ -3,6 +3,8 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import 'app_repositories.dart';
+import 'auth/auth_notifier.dart';
+import 'auth/permissions.dart';
 import 'models/author.dart';
 import 'models/author_query.dart';
 import 'models/book.dart';
@@ -15,29 +17,60 @@ import 'models/simple_query.dart';
 import 'repositories/author_repository.dart';
 import 'repositories/book_repository.dart';
 import 'repositories/entity_repository.dart';
+import 'repositories/stats_repository.dart';
+import 'repositories/user_repository.dart';
 import 'router.dart';
 import 'state/paged_list_notifier.dart';
 import 'state/reference_notifier.dart';
+import 'widgets/session_guard.dart';
 
 class LibraryApp extends StatefulWidget {
   const LibraryApp({
     super.key,
     required this.repositories,
-    this.initialLocation = '/books',
+    this.initialLocation = '/',
+    this.clock,
   });
 
   final AppRepositories repositories;
   final String initialLocation;
+
+  /// Часы для таймера сессии (в тестах подменяются).
+  final DateTime Function()? clock;
 
   @override
   State<LibraryApp> createState() => _LibraryAppState();
 }
 
 class _LibraryAppState extends State<LibraryApp> {
-  late final GoRouter _router = buildRouter(initialLocation: widget.initialLocation);
+  late final AuthNotifier _auth = widget.repositories.auth;
+  late final GoRouter _router = buildRouter(
+    auth: _auth,
+    initialLocation: widget.initialLocation,
+  );
+  int? _userId;
+
+  @override
+  void initState() {
+    super.initState();
+    _userId = _auth.user?.id;
+    _auth.addListener(_onAuthChanged);
+  }
+
+  /// Данные одного пользователя не должны достаться другому: при смене
+  /// пользователя сбрасываем кэши репозиториев, а ниже по ключу пересоздаём
+  /// все уведомители (списки, справочники).
+  void _onAuthChanged() {
+    final id = _auth.user?.id;
+    if (id == _userId) return;
+    _userId = id;
+    widget.repositories.invalidateAll();
+    if (mounted) setState(() {});
+  }
 
   @override
   void dispose() {
+    _auth.removeListener(_onAuthChanged);
     _router.dispose();
     super.dispose();
   }
@@ -47,7 +80,11 @@ class _LibraryAppState extends State<LibraryApp> {
     final repos = widget.repositories;
 
     return MultiProvider(
+      key: ValueKey<int?>(_userId),
       providers: [
+        ChangeNotifierProvider<AuthNotifier>.value(value: _auth),
+        Provider<UserRepository>.value(value: repos.users),
+        Provider<StatsRepository>.value(value: repos.stats),
         Provider<BookRepository>.value(value: repos.books),
         Provider<AuthorRepository>.value(value: repos.authors),
         Provider<GenreRepository>.value(value: repos.genres),
@@ -115,6 +152,8 @@ class _LibraryAppState extends State<LibraryApp> {
             authors: repos.authors,
             books: repos.books,
             readers: repos.readers,
+            // Читателю список читателей не нужен и сервер его не отдаёт.
+            loadReaders: _auth.can(Permission.viewReaders),
           )..load(),
         ),
       ],
@@ -133,6 +172,10 @@ class _LibraryAppState extends State<LibraryApp> {
           useMaterial3: true,
         ),
         routerConfig: _router,
+        builder: (context, child) => SessionGuard(
+          now: widget.clock,
+          child: child ?? const SizedBox.shrink(),
+        ),
       ),
     );
   }

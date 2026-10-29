@@ -1,3 +1,5 @@
+import 'package:dio/dio.dart';
+
 import '../core/api_exceptions.dart';
 import '../models/json_helpers.dart';
 import '../models/loan.dart';
@@ -64,6 +66,23 @@ class ApiLoanRepository extends ApiRepository<Loan, SimpleQuery>
     return guard(() async {
       final response = await dio.post<dynamic>('/$resource/$id/return');
       return fromJson(jsonMap(response.data));
+    });
+  }
+
+  @override
+  Future<Loan> extend(int id) {
+    return guard(() async {
+      try {
+        final response = await dio.post<dynamic>('/$resource/$id/extend');
+        return fromJson(jsonMap(response.data));
+      } on DioException catch (e) {
+        if (e.error is NotFoundException && '${e.error}'.contains('не обслуживается')) {
+          throw const ServerException(
+            'Этот сервер не умеет продлевать выдачи. Запустите tools/mock-server-pr5.js.',
+          );
+        }
+        rethrow;
+      }
     });
   }
 }

@@ -8,50 +8,44 @@
       "problemMatcher": []
     },
     {
-      "label": "2 Раздача приложения, сервер недоступен (порт 8099)",
+      "label": "2 Сервер ПР5 на 8080 (порт страницы 5555)",
       "type": "shell",
-      "command": "node tools/serve_build.js 5556 8099",
+      "command": "node tools/mock-server-pr5.js --port 8080 --origin http://localhost:5555",
       "isBackground": true,
       "problemMatcher": []
     },
     {
-      "label": "3 Раздача приложения, сервер на 8080",
+      "label": "3 Сервер ПР5 на 8080, токен живёт 60 секунд",
       "type": "shell",
-      "command": "node tools/serve_build.js 5556 8080",
+      "command": "node tools/mock-server-pr5.js --port 8080 --origin http://localhost:5555 --ttl 60",
       "isBackground": true,
       "problemMatcher": []
     },
     {
-      "label": "4 Мок-сервер на 8080",
+      "label": "4 Лекционный сервер на 8080 (без добавок ПР5)",
       "type": "shell",
-      "command": "node ../api/mock-server.js --port 8080",
+      "command": "node ../api/mock-server.js --port 8080 --origin http://localhost:5555",
       "isBackground": true,
       "problemMatcher": []
     },
     {
-      "label": "5 Сборка приложения (сервер на 8081)",
+      "label": "5 Приложение в Chrome, порт 5555",
       "type": "shell",
-      "command": "flutter build web --release --dart-define=API_BASE_URL=http://localhost:8081/api",
+      "command": "flutter run -d chrome --web-port=5555",
+      "isBackground": true,
       "problemMatcher": []
     },
     {
-      "label": "6 Мок-сервер на 8081, неверный адрес страницы",
+      "label": "6 Приложение в Chrome: выход через 30 с, предупреждение за 10 с",
       "type": "shell",
-      "command": "node ../api/mock-server.js --port 8081 --origin http://localhost:3000",
-      "problemMatcher": [],
-      "isBackground": true
+      "command": "flutter run -d chrome --web-port=5555 --dart-define=INACTIVITY_SECONDS=30 --dart-define=INACTIVITY_WARNING_SECONDS=10",
+      "isBackground": true,
+      "problemMatcher": []
     },
     {
-      "label": "7 Мок-сервер на 8081, верный адрес страницы",
+      "label": "7 Проверка проекта: analyze и test (результат в check.log)",
       "type": "shell",
-      "command": "node ../api/mock-server.js --port 8081 --origin http://localhost:5556",
-      "problemMatcher": [],
-      "isBackground": true
-    },
-    {
-      "label": "8 Загрузить данные ПР3 на 8081",
-      "type": "shell",
-      "command": "node tools/seed_old_data.js http://localhost:8081/api",
+      "command": "tools\\check.bat",
       "problemMatcher": []
     }
   ]

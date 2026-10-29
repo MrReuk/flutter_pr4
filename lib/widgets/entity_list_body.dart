@@ -42,8 +42,8 @@ class EntityListBody<T> extends StatelessWidget {
   final int Function(T item) idOf;
   final bool Function(T item) isDeleted;
   final Set<int> selected;
-  final ValueChanged<int> onToggleSelect;
-  final ValueChanged<bool> onSelectAll;
+  final ValueChanged<int>? onToggleSelect;
+  final ValueChanged<bool>? onSelectAll;
   final String sortField;
   final bool sortAscending;
   final void Function(String field) onSort;
@@ -143,7 +143,7 @@ class _CardList<T> extends StatelessWidget {
   final int Function(T item) idOf;
   final bool Function(T item) isDeleted;
   final Set<int> selected;
-  final ValueChanged<int> onToggleSelect;
+  final ValueChanged<int>? onToggleSelect;
   final String sortField;
   final bool sortAscending;
   final void Function(String field) onSort;
@@ -205,10 +205,13 @@ class _CardList<T> extends StatelessWidget {
                   onTap: onOpen == null ? null : () => onOpen!(item),
                   child: Row(
                     children: [
-                      Checkbox(
-                        value: selected.contains(id),
-                        onChanged: (_) => onToggleSelect(id),
-                      ),
+                      if (onToggleSelect != null)
+                        Checkbox(
+                          value: selected.contains(id),
+                          onChanged: (_) => onToggleSelect!(id),
+                        )
+                      else
+                        const SizedBox(width: 16),
                       Expanded(
                         child: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 8),

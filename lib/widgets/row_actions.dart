@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../auth/rights.dart';
 import 'confirm_dialog.dart';
 
 List<Widget> buildRowActions(
   BuildContext context, {
   required bool deleted,
+  required ListRights rights,
   required String name,
   VoidCallback? onEdit,
   List<Widget> extra = const [],
@@ -20,19 +22,19 @@ List<Widget> buildRowActions(
 
   return [
     ...extra,
-    if (onEdit != null)
+    if (onEdit != null && rights.canManage)
       IconButton(
         tooltip: 'Изменить',
         icon: const Icon(Icons.edit_outlined),
         onPressed: onEdit,
       ),
-    if (deleted)
+    if (deleted && rights.canRestore)
       IconButton(
         tooltip: 'Восстановить',
         icon: const Icon(Icons.restore),
         onPressed: () => report(onRestore),
       )
-    else
+    else if (!deleted && rights.canManage)
       IconButton(
         tooltip: 'Удалить',
         icon: const Icon(Icons.delete_outline),
@@ -45,21 +47,22 @@ List<Widget> buildRowActions(
           if (confirmed) await report(onSoftDelete);
         },
       ),
-    IconButton(
-      tooltip: 'Удалить навсегда',
-      icon: Icon(
-        Icons.delete_forever,
-        color: Theme.of(context).colorScheme.error,
+    if (rights.canHardDelete)
+      IconButton(
+        tooltip: 'Удалить навсегда',
+        icon: Icon(
+          Icons.delete_forever,
+          color: Theme.of(context).colorScheme.error,
+        ),
+        onPressed: () async {
+          final confirmed = await confirmAction(
+            context,
+            title: 'Удалить навсегда?',
+            message: '«$name» будет стёрта без возможности восстановления.',
+            confirmLabel: 'Удалить навсегда',
+          );
+          if (confirmed) await report(onHardDelete);
+        },
       ),
-      onPressed: () async {
-        final confirmed = await confirmAction(
-          context,
-          title: 'Удалить навсегда?',
-          message: '«$name» будет стёрта без возможности восстановления.',
-          confirmLabel: 'Удалить навсегда',
-        );
-        if (confirmed) await report(onHardDelete);
-      },
-    ),
   ];
 }

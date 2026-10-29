@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../auth/permissions.dart';
+import '../auth/rights.dart';
 import '../models/book.dart';
 import '../models/book_query.dart';
 import '../state/paged_list_notifier.dart';
@@ -103,6 +105,7 @@ class _BookListScreenState extends State<BookListScreen> {
     final notifier = context.watch<PagedListNotifier<Book, BookQuery>>();
     final refs = context.watch<ReferenceNotifier>();
     final q = _query;
+    final rights = listRights(context, Permission.manageCatalog);
 
     return LibraryScaffold(
       title: 'Книги',
@@ -116,7 +119,7 @@ class _BookListScreenState extends State<BookListScreen> {
             initiallyOpen: q.activeFilterCount > 0,
             onReset: () => _go(_resetQuery),
             addLabel: 'Добавить книгу',
-            onAdd: () => _open('/books/new'),
+            onAdd: rights.canManage ? () => _open('/books/new') : null,
             filters: [
               IdDropdown(
                 label: 'Жанр',
@@ -178,10 +181,11 @@ class _BookListScreenState extends State<BookListScreen> {
                   const Text('Только доступные'),
                 ],
               ),
-              DeletedSwitch(
-                value: q.includeDeleted,
-                onChanged: (value) => _go(_query.copyWith(includeDeleted: value)),
-              ),
+              if (rights.canRestore)
+                DeletedSwitch(
+                  value: q.includeDeleted,
+                  onChanged: (value) => _go(_query.copyWith(includeDeleted: value)),
+                ),
             ],
           ),
           if (notifier.hasSelection)
@@ -239,8 +243,8 @@ class _BookListScreenState extends State<BookListScreen> {
               idOf: (b) => b.id,
               isDeleted: (b) => b.isDeleted,
               selected: notifier.selected,
-              onToggleSelect: notifier.toggleSelection,
-              onSelectAll: notifier.setAllSelected,
+              onToggleSelect: rights.canManage ? notifier.toggleSelection : null,
+              onSelectAll: rights.canManage ? notifier.setAllSelected : null,
               sortField: q.sortField,
               sortAscending: q.sortAscending,
               onSort: (field) => _go(
@@ -254,6 +258,7 @@ class _BookListScreenState extends State<BookListScreen> {
               actions: (b) => buildRowActions(
                 context,
                 deleted: b.isDeleted,
+                rights: rights,
                 name: b.title,
                 onEdit: () => _open('/books/${b.id}/edit'),
                 onSoftDelete: () => _afterChange(() => notifier.softDelete(b.id)),

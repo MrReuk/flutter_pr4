@@ -2,7 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 import 'api_exceptions.dart';
-import 'auth_session.dart';
+import 'auth_gateway.dart';
 import 'config.dart';
 
 const List<Duration> kRetryDelays = [
@@ -10,25 +10,30 @@ const List<Duration> kRetryDelays = [
   Duration(milliseconds: 1500),
 ];
 
+const String _kReauthorized = 'reauthorized';
+
+BaseOptions _baseOptions(String? baseUrl) {
+  return BaseOptions(
+    baseUrl: baseUrl ?? apiBaseUrl,
+    connectTimeout: const Duration(seconds: 10),
+    receiveTimeout: const Duration(seconds: 15),
+    validateStatus: (status) => status != null && status < 500,
+  );
+}
+
+/// Основной клиент: токен в каждом запросе, обновление токена при 401,
+/// повторы чтения при сбоях сети.
 Dio buildDio({
   String? baseUrl,
-  String? Function()? tokenProvider,
-  AuthSession? session,
+  AuthGateway? auth,
   HttpClientAdapter? adapter,
   List<Duration> retryDelays = kRetryDelays,
   Map<String, String> debugFlags = const {},
 }) {
-  final dio = Dio(
-    BaseOptions(
-      baseUrl: baseUrl ?? apiBaseUrl,
-      connectTimeout: const Duration(seconds: 10),
-      receiveTimeout: const Duration(seconds: 15),
-      validateStatus: (status) => status != null && status < 500,
-    ),
-  );
+  final dio = Dio(_baseOptions(baseUrl));
   if (adapter != null) dio.httpClientAdapter = adapter;
 
-  dio.interceptors.add(_AuthInterceptor(session: session, tokenProvider: tokenProvider));
+  dio.interceptors.add(_AuthInterceptor(auth));
 
   dio.interceptors.add(
     InterceptorsWrapper(
@@ -63,22 +68,15 @@ Dio buildDio({
     ),
   );
 
-  dio.interceptors.add(
-    _RecoveryInterceptor(dio: dio, session: session, delays: retryDelays),
-  );
+  dio.interceptors.add(_RecoveryInterceptor(dio: dio, auth: auth, delays: retryDelays));
 
   return dio;
 }
 
-Dio buildLoginDio({String? baseUrl, HttpClientAdapter? adapter}) {
-  final dio = Dio(
-    BaseOptions(
-      baseUrl: baseUrl ?? apiBaseUrl,
-      connectTimeout: const Duration(seconds: 10),
-      receiveTimeout: const Duration(seconds: 15),
-      validateStatus: (status) => status != null && status < 500,
-    ),
-  );
+/// Клиент для запросов /auth/*. Без перехватчиков: ошибка входа с кодом 401
+/// не должна запускать обновление токена, иначе получится цикл.
+Dio buildAuthDio({String? baseUrl, HttpClientAdapter? adapter}) {
+  final dio = Dio(_baseOptions(baseUrl));
   if (adapter != null) dio.httpClientAdapter = adapter;
   return dio;
 }
@@ -92,52 +90,33 @@ void _log(RequestOptions options, String outcome) {
   debugPrint('[API] ${options.method} ${options.uri} → $outcome$elapsed');
 }
 
-class _AuthInterceptor extends Interceptor {
-  _AuthInterceptor({required this.session, required this.tokenProvider});
+bool _isAuthCall(RequestOptions options) => options.path.startsWith('/auth/');
 
-  final AuthSession? session;
-  final String? Function()? tokenProvider;
+/// Добавляет заголовок Authorization ко всем запросам, кроме /auth/*.
+class _AuthInterceptor extends Interceptor {
+  _AuthInterceptor(this.auth);
+
+  final AuthGateway? auth;
 
   @override
-  Future<void> onRequest(
-    RequestOptions options,
-    RequestInterceptorHandler handler,
-  ) async {
-    final isAuthCall = options.path.startsWith('/auth/');
-    final current = session;
-
-    if (!isAuthCall && current != null && options.method.toUpperCase() != 'GET') {
-      try {
-        await current.ensureSignedIn();
-      } on ApiException catch (e) {
-        return handler.reject(
-          DioException(
-            requestOptions: options,
-            error: e,
-            type: DioExceptionType.unknown,
-          ),
-          true,
-        );
-      }
-    }
-
-    final token = current?.token ?? tokenProvider?.call();
-    if (token != null && !isAuthCall) {
+  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
+    final token = auth?.accessToken;
+    if (token != null && !_isAuthCall(options)) {
       options.headers['Authorization'] = 'Bearer $token';
     }
-    return handler.next(options);
+    handler.next(options);
   }
 }
 
 class _RecoveryInterceptor extends Interceptor {
   _RecoveryInterceptor({
     required this.dio,
-    required this.session,
+    required this.auth,
     required this.delays,
   });
 
   final Dio dio;
-  final AuthSession? session;
+  final AuthGateway? auth;
   final List<Duration> delays;
 
   bool _isNetworkFailure(DioException error) {
@@ -157,26 +136,10 @@ class _RecoveryInterceptor extends Interceptor {
     if (err.type == DioExceptionType.cancel) return handler.next(err);
 
     final options = err.requestOptions;
-    final current = session;
+    final gateway = auth;
 
-    if (err.response?.statusCode == 401 &&
-        current != null &&
-        !options.path.startsWith('/auth/') &&
-        options.extra['reauthorized'] != true) {
-      current.forget();
-      options.extra['reauthorized'] = true;
-      try {
-        await current.ensureSignedIn();
-      } on ApiException catch (e) {
-        return handler.next(
-          DioException(
-            requestOptions: options,
-            error: e,
-            type: DioExceptionType.unknown,
-          ),
-        );
-      }
-      return _replay(options, handler);
+    if (err.response?.statusCode == 401 && gateway != null && !_isAuthCall(options)) {
+      return _onUnauthorized(err, gateway, handler);
     }
 
     final attempt = (options.extra['retryAttempt'] as int?) ?? 0;
@@ -189,6 +152,60 @@ class _RecoveryInterceptor extends Interceptor {
     }
 
     return handler.next(err);
+  }
+
+  Future<void> _onUnauthorized(
+    DioException err,
+    AuthGateway gateway,
+    ErrorInterceptorHandler handler,
+  ) async {
+    final options = err.requestOptions;
+
+    // Уже повторяли этот запрос с новым токеном, а ответ снова 401:
+    // обновлять токен ещё раз бессмысленно. Выходим, чтобы не зациклиться.
+    if (options.extra[_kReauthorized] == true) {
+      await gateway.sessionLost();
+      return handler.next(
+        _failed(options, const UnauthorizedException('Сессия истекла. Войдите снова.')),
+      );
+    }
+    options.extra[_kReauthorized] = true;
+
+    // Токен в запросе уже старше текущего: его успели обновить параллельным
+    // запросом. Достаточно повторить с новым токеном.
+    final sent = options.headers['Authorization'];
+    final current = gateway.accessToken;
+    final alreadyRefreshed = current != null && sent != 'Bearer $current';
+
+    if (!alreadyRefreshed) {
+      try {
+        await gateway.refreshTokens();
+      } on ApiException catch (e) {
+        // Сервер недоступен: это не повод разрывать сессию.
+        if (e is NetworkException || e is ServerException) {
+          return handler.next(_failed(options, e));
+        }
+        await gateway.sessionLost();
+        return handler.next(
+          _failed(options, const UnauthorizedException('Сессия истекла. Войдите снова.')),
+        );
+      } catch (_) {
+        await gateway.sessionLost();
+        return handler.next(
+          _failed(options, const UnauthorizedException('Сессия истекла. Войдите снова.')),
+        );
+      }
+    }
+
+    return _replay(options, handler);
+  }
+
+  DioException _failed(RequestOptions options, ApiException error) {
+    return DioException(
+      requestOptions: options,
+      error: error,
+      type: DioExceptionType.unknown,
+    );
   }
 
   Future<void> _replay(

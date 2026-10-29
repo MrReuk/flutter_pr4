@@ -20,7 +20,9 @@ class ReferenceNotifier extends ChangeNotifier {
     required AuthorRepository authors,
     required BookRepository books,
     required ReaderRepository readers,
-  })  : _genres = genres,
+    bool loadReaders = true,
+  })  : _loadReaders = loadReaders,
+        _genres = genres,
         _publishers = publishers,
         _authors = authors,
         _books = books,
@@ -31,6 +33,9 @@ class ReferenceNotifier extends ChangeNotifier {
   final AuthorRepository _authors;
   final BookRepository _books;
   final ReaderRepository _readers;
+
+  /// Читателю список читателей не нужен и не должен запрашиваться.
+  final bool _loadReaders;
 
   Map<int, String> _genreNames = const {};
   Map<int, String> _publisherNames = const {};
@@ -113,7 +118,7 @@ class ReferenceNotifier extends ChangeNotifier {
       if (withLinks) {
         final links = await Future.wait<Object?>([
           _books.findAll(),
-          _readers.findAll(),
+          if (_loadReaders) _readers.findAll() else Future<List<Reader>>.value(const []),
         ]);
         final books = links[0] as List<Book>;
         final readers = links[1] as List<Reader>;

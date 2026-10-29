@@ -4,9 +4,41 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:library_app/app_repositories.dart';
+import 'package:library_app/auth/auth_api.dart';
+import 'package:library_app/auth/auth_notifier.dart';
+import 'package:library_app/auth/session_policy.dart';
 import 'package:library_app/core/api_client.dart';
-import 'package:library_app/core/auth_session.dart';
 import 'package:library_app/models/json_helpers.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+/// Учётные записи тестового сервера (те же, что в учебном мок-сервере).
+const Map<String, String> kTestPasswords = {
+  'admin': 'admin123',
+  'librarian': 'librarian123',
+  'reader': 'reader123',
+};
+
+const Map<String, int> _roleLevel = {'reader': 1, 'librarian': 2, 'admin': 3};
+
+class FakeUser {
+  FakeUser(this.id, this.username, this.password, this.fullName, this.role, {this.readerId});
+
+  final int id;
+  final String username;
+  final String password;
+  final String fullName;
+  String role;
+  final int? readerId;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'username': username,
+        'fullName': fullName,
+        'email': '$username@example.com',
+        'role': role,
+        'readerId': readerId,
+      };
+}
 
 class FakeServer implements HttpClientAdapter {
   FakeServer() {
@@ -21,9 +53,32 @@ class FakeServer implements HttpClientAdapter {
   late Map<String, List<Map<String, dynamic>>> data;
   int _nextId = 100;
   int _issued = 0;
-  String? _validToken;
+
+  /// Пользователи сервера. Роль берётся отсюда, а не из токена: как на настоящем сервере.
+  late List<FakeUser> users;
+  final Map<String, int> _access = {};
+  final Map<String, int> _refresh = {};
+
+  /// Сервер отвечает 401 на любое обновление токена.
+  bool refreshRejected = false;
+
+  /// Сервер не принимает ни один токен доступа, даже свежий.
+  bool rejectAllAccess = false;
+
+  /// Сервер недоступен только для запроса обновления токена.
+  bool refreshUnreachable = false;
+
+  /// Пауза внутри обновления токена (чтобы параллельные запросы успели встать в очередь).
+  Duration refreshDelay = Duration.zero;
 
   void reset() {
+    users = [
+      FakeUser(1, 'admin', 'admin123', 'Администратор', 'admin'),
+      FakeUser(2, 'librarian', 'librarian123', 'Петрова А. С.', 'librarian'),
+      FakeUser(3, 'reader', 'reader123', 'Смирнов П. А.', 'reader', readerId: 1),
+    ];
+    _access.clear();
+    _refresh.clear();
     data = {
       'genres': [
         {'id': 1, 'name': 'Роман', 'description': 'Крупная форма', 'deletedAt': null},
@@ -78,6 +133,26 @@ class FakeServer implements HttpClientAdapter {
           'status': 'overdue',
           'deletedAt': null,
         },
+        {
+          'id': 2,
+          'reader': {'id': 2, 'fullName': 'Кузнецова М. И.'},
+          'book': {'id': 2, 'title': 'Преступление и наказание'},
+          'issuedAt': '2026-10-20T10:00:00.000Z',
+          'dueAt': '2026-11-20T10:00:00.000Z',
+          'returnedAt': null,
+          'status': 'active',
+          'deletedAt': null,
+        },
+        {
+          'id': 3,
+          'reader': {'id': 1, 'fullName': 'Смирнов П. А.'},
+          'book': {'id': 4, 'title': 'Скотный двор'},
+          'issuedAt': '2026-10-25T10:00:00.000Z',
+          'dueAt': '2026-11-25T10:00:00.000Z',
+          'returnedAt': null,
+          'status': 'active',
+          'deletedAt': null,
+        },
       ],
     };
   }
@@ -108,11 +183,44 @@ class FakeServer implements HttpClientAdapter {
     };
   }
 
-  void revokeToken() {
-    _validToken = null;
-  }
+  /// Токены доступа перестали действовать (прошёл срок --ttl).
+  void expireAccess() => _access.clear();
+
+  /// Токены обновления больше не принимаются.
+  void expireRefresh() => _refresh.clear();
 
   int get loginCount => requests.where((r) => r.uri.path.endsWith('/auth/login')).length;
+
+  int get refreshCount => requests.where((r) => r.uri.path.endsWith('/auth/refresh')).length;
+
+  Iterable<RequestOptions> get protectedCalls =>
+      requests.where((r) => !r.uri.path.contains('/auth/'));
+
+  FakeUser? _userOf(RequestOptions options) {
+    if (rejectAllAccess) return null;
+    final header = '${options.headers['Authorization'] ?? ''}';
+    if (!header.startsWith('Bearer ')) return null;
+    final id = _access[header.substring(7)];
+    if (id == null) return null;
+    for (final user in users) {
+      if (user.id == id) return user;
+    }
+    return null;
+  }
+
+  Map<String, dynamic> _tokens(FakeUser user) {
+    final n = ++_issued;
+    final access = 'access-$n-${user.id}';
+    final refresh = 'refresh-$n-${user.id}';
+    _access[access] = user.id;
+    _refresh[refresh] = user.id;
+    return {
+      'accessToken': access,
+      'refreshToken': refresh,
+      'expiresIn': 900,
+      'user': user.toJson(),
+    };
+  }
 
   Iterable<RequestOptions> calls(String method, String path) =>
       requests.where((r) => r.method == method && r.uri.path == '/api$path');
@@ -158,7 +266,7 @@ class FakeServer implements HttpClientAdapter {
   ResponseBody _fail(int status, String message) =>
       _json(status, {'message': message});
 
-  ResponseBody _route(RequestOptions options) {
+  Future<ResponseBody> _route(RequestOptions options) async {
     final method = options.method.toUpperCase();
     final query = options.uri.queryParameters;
     final path = options.uri.path.replaceFirst('/api', '');
@@ -170,9 +278,40 @@ class FakeServer implements HttpClientAdapter {
       return _fail(int.parse(query['__fail']!), 'Ошибка вызвана намеренно');
     }
 
-    if (path == '/auth/login' && method == 'POST') {
-      _validToken = 'token-${++_issued}';
-      return _json(200, {'accessToken': _validToken, 'expiresIn': 900});
+    if (path.startsWith('/auth/')) {
+      if (path == '/auth/refresh' && refreshDelay > Duration.zero) {
+        await Future<void>.delayed(refreshDelay);
+      }
+      return _auth(options, path, method, body);
+    }
+
+    final current = _userOf(options);
+    if (current == null) return _fail(401, 'Требуется аутентификация');
+
+    if (path == '/users' && method == 'GET') {
+      if (!_atLeast(current, 'admin')) return _forbidden('admin');
+      return _json(200, {
+        'items': [for (final u in users) u.toJson()],
+        'page': 1,
+        'size': 10,
+        'total': users.length,
+        'totalPages': 1,
+      });
+    }
+    final userMatch = RegExp(r'^/users/(\d+)$').firstMatch(path);
+    if (userMatch != null && method == 'PATCH') {
+      if (!_atLeast(current, 'admin')) return _forbidden('admin');
+      final target = users.where((u) => u.id == int.parse(userMatch.group(1)!));
+      if (target.isEmpty) return _fail(404, 'Пользователь не найден');
+      final role = '${body['role']}';
+      if (!_roleLevel.containsKey(role)) {
+        return _json(422, {
+          'message': 'Ошибка валидации',
+          'errors': {'role': 'Допустимые роли: reader, librarian, admin'},
+        });
+      }
+      target.first.role = role;
+      return _json(200, target.first.toJson());
     }
 
     final parts = path.split('/').where((s) => s.isNotEmpty).toList();
@@ -182,13 +321,19 @@ class FakeServer implements HttpClientAdapter {
     final collection = parts[0];
     final rows = data[collection]!;
 
-    if (method != 'GET' && options.headers['Authorization'] != 'Bearer $_validToken') {
-      return _fail(401, 'Требуется аутентификация');
-    }
+    final denied = _checkRole(current, method, parts, query);
+    if (denied != null) return denied;
 
     if (method == 'GET' && parts.length == 1) {
       if (malformed) return _json(200, {'oops': 1});
-      return _json(200, _list(collection, rows, query));
+      var visible = rows;
+      if (current.role == 'reader' && collection == 'loans') {
+        visible = [for (final r in rows) if (jsonRefId(r['reader']) == current.readerId) r];
+      }
+      if (current.role == 'reader' && collection == 'readers') {
+        visible = [for (final r in rows) if (r['id'] == current.readerId) r];
+      }
+      return _json(200, _list(collection, visible, query));
     }
 
     if (method == 'GET' && parts.length == 2) {
@@ -210,6 +355,17 @@ class FakeServer implements HttpClientAdapter {
         }
       }
       return _json(200, {'deleted': deleted});
+    }
+
+    if (method == 'POST' && collection == 'loans' && parts.length == 3 && parts[2] == 'extend') {
+      final row = _find(rows, int.parse(parts[1]));
+      if (row == null) return _fail(404, 'Выдача не найдена');
+      if (current.role == 'reader' && jsonRefId(row['reader']) != current.readerId) {
+        return _fail(403, 'Продлевать можно только собственные выдачи');
+      }
+      if (row['returnedAt'] != null) return _fail(409, 'Выдача уже закрыта');
+      row['dueAt'] = '2026-12-31T10:00:00.000Z';
+      return _json(200, row);
     }
 
     if (method == 'POST' && parts.length == 3) {
@@ -258,6 +414,92 @@ class FakeServer implements HttpClientAdapter {
         row['deletedAt'] = DateTime.now().toIso8601String();
       }
       return _json(204, null);
+    }
+
+    return _fail(404, 'Адрес не обслуживается');
+  }
+
+  bool _atLeast(FakeUser user, String role) => _roleLevel[user.role]! >= _roleLevel[role]!;
+
+  ResponseBody _forbidden(String role) =>
+      _fail(403, 'Операция доступна начиная с роли «$role»');
+
+  /// Права как в КОНТРАКТ-API.md, раздел 2.2.
+  ResponseBody? _checkRole(
+    FakeUser user,
+    String method,
+    List<String> parts,
+    Map<String, String> query,
+  ) {
+    if (method == 'GET') return null;
+    final last = parts.isEmpty ? '' : parts.last;
+    if (last == 'extend') return null;
+    final adminOnly = last == 'restore' || (method == 'DELETE' && query['hard'] == 'true');
+    final needed = adminOnly ? 'admin' : 'librarian';
+    return _atLeast(user, needed) ? null : _forbidden(needed);
+  }
+
+  ResponseBody _auth(
+    RequestOptions options,
+    String path,
+    String method,
+    Map<String, dynamic> body,
+  ) {
+    if (path == '/auth/login' && method == 'POST') {
+      for (final user in users) {
+        if (user.username == '${body['username']}' && user.password == '${body['password']}') {
+          return _json(200, _tokens(user));
+        }
+      }
+      return _fail(401, 'Неверный логин или пароль');
+    }
+
+    if (path == '/auth/refresh' && method == 'POST') {
+      if (refreshUnreachable) {
+        throw DioException.connectionError(requestOptions: options, reason: 'Connection refused');
+      }
+      if (refreshRejected) return _fail(401, 'Токен обновления недействителен');
+      final id = _refresh.remove('${body['refreshToken']}');
+      if (id == null) return _fail(401, 'Токен обновления недействителен');
+      return _json(200, _tokens(users.firstWhere((u) => u.id == id)));
+    }
+
+    if (path == '/auth/me' && method == 'GET') {
+      final user = _userOf(options);
+      return user == null ? _fail(401, 'Требуется аутентификация') : _json(200, user.toJson());
+    }
+
+    if (path == '/auth/logout' && method == 'POST') {
+      _refresh.remove('${body['refreshToken']}');
+      return _json(204, null);
+    }
+
+    if (path == '/auth/register' && method == 'POST') {
+      final errors = <String, String>{};
+      final username = '${body['username']}'.trim();
+      final password = '${body['password']}';
+      if (username.length < 3) {
+        errors['username'] = 'Логин не короче трёх символов';
+      } else if (users.any((u) => u.username == username)) {
+        errors['username'] = 'Такой логин уже занят';
+      }
+      if (password.length < 8) {
+        errors['password'] = 'Пароль не короче восьми символов';
+      } else if (!RegExp(r'\d').hasMatch(password)) {
+        errors['password'] = 'Пароль должен содержать цифру';
+      }
+      if (errors.isNotEmpty) {
+        return _json(422, {'message': 'Ошибка валидации', 'errors': errors});
+      }
+      final user = FakeUser(
+        users.length + 1,
+        username,
+        password,
+        '${body['fullName'] ?? username}',
+        'reader',
+      );
+      users.add(user);
+      return _json(201, user.toJson());
     }
 
     return _fail(404, 'Адрес не обслуживается');
@@ -384,20 +626,51 @@ class FakeServer implements HttpClientAdapter {
   }
 }
 
-AppRepositories makeRepositories(
+/// Собирает клиент поверх тестового сервера. По умолчанию входит под [user]
+/// (admin, librarian, reader); null: оставляет клиент без входа.
+Future<AppRepositories> makeRepositories(
   FakeServer server, {
+  String? user = 'admin',
   Map<String, String> debugFlags = const {},
-}) {
-  final session = AuthSession(
-    username: 'admin',
-    password: 'admin123',
-    client: buildLoginDio(adapter: server),
+  SessionPolicy policy = const SessionPolicy(),
+  DateTime Function()? now,
+  SharedPreferences? prefs,
+}) async {
+  SharedPreferences store;
+  if (prefs != null) {
+    store = prefs;
+  } else {
+    SharedPreferences.setMockInitialValues({});
+    store = await SharedPreferences.getInstance();
+  }
+  final auth = AuthNotifier(
+    prefs: store,
+    api: AuthApi(buildAuthDio(adapter: server)),
+    policy: policy,
+    now: now,
   );
   final dio = buildDio(
-    session: session,
+    auth: auth,
     adapter: server,
     retryDelays: const [Duration.zero, Duration.zero],
     debugFlags: debugFlags,
   );
-  return AppRepositories(dio: dio);
+  final repositories = AppRepositories(dio: dio, auth: auth);
+  if (user != null) await auth.login(user, kTestPasswords[user]!);
+  return repositories;
+}
+
+/// Клиент с уже подготовленной парой токенов, но без входа через форму.
+Future<AuthNotifier> makeAuth(
+  FakeServer server,
+  SharedPreferences prefs, {
+  SessionPolicy policy = const SessionPolicy(),
+  DateTime Function()? now,
+}) async {
+  return AuthNotifier(
+    prefs: prefs,
+    api: AuthApi(buildAuthDio(adapter: server)),
+    policy: policy,
+    now: now,
+  );
 }

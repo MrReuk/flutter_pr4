@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../auth/permissions.dart';
+import '../auth/rights.dart';
 import '../models/author.dart';
 import '../models/author_query.dart';
 import '../state/paged_list_notifier.dart';
@@ -98,6 +100,7 @@ class _AuthorListScreenState extends State<AuthorListScreen> {
   Widget build(BuildContext context) {
     final notifier = context.watch<PagedListNotifier<Author, AuthorQuery>>();
     final q = _query;
+    final rights = listRights(context, Permission.manageCatalog);
 
     return LibraryScaffold(
       title: 'Авторы',
@@ -111,12 +114,13 @@ class _AuthorListScreenState extends State<AuthorListScreen> {
             initiallyOpen: q.activeFilterCount > 0,
             onReset: () => _go(_resetQuery),
             addLabel: 'Добавить автора',
-            onAdd: () => _open('/authors/new'),
+            onAdd: rights.canManage ? () => _open('/authors/new') : null,
             filters: [
-              DeletedSwitch(
-                value: q.includeDeleted,
-                onChanged: (value) => _go(_query.copyWith(includeDeleted: value)),
-              ),
+              if (rights.canRestore)
+                DeletedSwitch(
+                  value: q.includeDeleted,
+                  onChanged: (value) => _go(_query.copyWith(includeDeleted: value)),
+                ),
             ],
           ),
           if (notifier.hasSelection)
@@ -156,8 +160,8 @@ class _AuthorListScreenState extends State<AuthorListScreen> {
               idOf: (a) => a.id,
               isDeleted: (a) => a.isDeleted,
               selected: notifier.selected,
-              onToggleSelect: notifier.toggleSelection,
-              onSelectAll: notifier.setAllSelected,
+              onToggleSelect: rights.canManage ? notifier.toggleSelection : null,
+              onSelectAll: rights.canManage ? notifier.setAllSelected : null,
               sortField: q.sortField,
               sortAscending: q.sortAscending,
               onSort: (field) => _go(
@@ -171,6 +175,7 @@ class _AuthorListScreenState extends State<AuthorListScreen> {
               actions: (a) => buildRowActions(
                 context,
                 deleted: a.isDeleted,
+                rights: rights,
                 name: a.fullName,
                 onEdit: () => _open('/authors/${a.id}/edit'),
                 onSoftDelete: () => _afterChange(() => notifier.softDelete(a.id)),

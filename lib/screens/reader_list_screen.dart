@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../auth/permissions.dart';
 import '../models/reader.dart';
 import '../models/simple_query.dart';
 import '../validation/validators.dart';
@@ -24,6 +25,7 @@ class ReaderListScreen extends StatelessWidget {
     return SimpleListScreen<Reader>(
       query: query,
       config: SimpleListConfig<Reader>(
+        managePermission: Permission.manageReaders,
         title: 'Читатели',
         path: '/readers',
         searchLabel: 'Поиск по ФИО, почте или телефону',

@@ -2,13 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:library_app/app.dart';
 
+import 'app_harness.dart';
 import 'test_helpers.dart';
-
-void _useLargeScreen(WidgetTester tester) {
-  tester.view.physicalSize = const Size(1600, 2400);
-  tester.view.devicePixelRatio = 1;
-  addTearDown(tester.view.reset);
-}
 
 void main() {
   late FakeServer server;
@@ -16,11 +11,12 @@ void main() {
   setUp(() => server = FakeServer());
 
   testWidgets('Список показывает загрузку, затем данные с сервера', (tester) async {
-    _useLargeScreen(tester);
+    useLargeScreen(tester);
+    final repos = await signedIn(tester, server);
     server.delay = const Duration(milliseconds: 50);
 
     await tester.pumpWidget(
-      LibraryApp(repositories: makeRepositories(server), initialLocation: '/books'),
+      LibraryApp(repositories: repos, initialLocation: '/books'),
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 5));
@@ -35,11 +31,12 @@ void main() {
   });
 
   testWidgets('Недоступный сервер показывает ошибку, кнопка повтора загружает данные', (tester) async {
-    _useLargeScreen(tester);
+    useLargeScreen(tester);
+    final repos = await signedIn(tester, server);
     server.down = true;
 
     await tester.pumpWidget(
-      LibraryApp(repositories: makeRepositories(server), initialLocation: '/books'),
+      LibraryApp(repositories: repos, initialLocation: '/books'),
     );
     await tester.pumpAndSettle();
 
@@ -55,11 +52,12 @@ void main() {
   });
 
   testWidgets('Пустой результат поиска показывает сообщение, а не ошибку', (tester) async {
-    _useLargeScreen(tester);
+    useLargeScreen(tester);
+    final repos = await signedIn(tester, server);
 
     await tester.pumpWidget(
       LibraryApp(
-        repositories: makeRepositories(server),
+        repositories: repos,
         initialLocation: '/books?search=zzzzzz',
       ),
     );
@@ -70,11 +68,12 @@ void main() {
   });
 
   testWidgets('Пустая форма книги показывает ошибки у обязательных полей', (tester) async {
-    _useLargeScreen(tester);
+    useLargeScreen(tester);
+    final repos = await signedIn(tester, server);
 
     await tester.pumpWidget(
       LibraryApp(
-        repositories: makeRepositories(server),
+        repositories: repos,
         initialLocation: '/books/new',
       ),
     );
@@ -93,11 +92,12 @@ void main() {
   });
 
   testWidgets('Ошибка 422 показывается под полем формы', (tester) async {
-    _useLargeScreen(tester);
+    useLargeScreen(tester);
+    final repos = await signedIn(tester, server);
 
     await tester.pumpWidget(
       LibraryApp(
-        repositories: makeRepositories(server),
+        repositories: repos,
         initialLocation: '/genres/new',
       ),
     );
@@ -112,11 +112,12 @@ void main() {
   });
 
   testWidgets('Удаление издательства с книгами отклоняется с указанием числа книг', (tester) async {
-    _useLargeScreen(tester);
+    useLargeScreen(tester);
+    final repos = await signedIn(tester, server);
 
     await tester.pumpWidget(
       LibraryApp(
-        repositories: makeRepositories(server),
+        repositories: repos,
         initialLocation: '/publishers',
       ),
     );

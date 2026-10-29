@@ -1,5 +1,5 @@
 name: library_app
-description: "Клиент библиотечной системы: каталог, формы и валидация, подключение к серверному API (практическая работа 4)."
+description: "Клиент библиотечной системы: вход, роли, защита маршрутов, обновление токена и управление сессией (практическая работа 5)."
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -14,6 +14,7 @@ dependencies:
   dio: ^5.9.0
   go_router: ^17.5.0
   provider: ^6.1.5
+  shared_preferences: ^2.5.3
 
 dev_dependencies:
   flutter_test:
